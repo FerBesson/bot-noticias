@@ -1,0 +1,7 @@
+.env
+noticias_enviadas.json
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+temp/
