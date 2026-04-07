@@ -1,5 +1,17 @@
+import os
+import tempfile
+import shutil
+import certifi
 import yfinance as yf
 
+# ----- FIX PARA CARPETAS CON TILDES EN WINDOWS (curl_cffi / yfinance) -----
+# Copia el certificado a una ruta limpia (sin tildes) en la carpeta Temp 
+safe_cert_path = os.path.join(tempfile.gettempdir(), "cacert.pem")
+if not os.path.exists(safe_cert_path):
+    shutil.copy2(certifi.where(), safe_cert_path)
+os.environ["CURL_CA_BUNDLE"] = safe_cert_path
+os.environ["REQUESTS_CA_BUNDLE"] = safe_cert_path
+# --------------------------------------------------------------------------
 # Definición de activos y sus tickers referenciales en Yahoo Finance
 ASSETS = {
     "S&P 500 (SPY)": "SPY",
