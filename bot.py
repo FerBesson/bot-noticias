@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import html
 import feedparser
 import requests
 import schedule
@@ -31,11 +32,11 @@ else:
 HISTORY_FILE = "noticias_enviadas.json"
 
 FEEDS = {
-    "Yahoo Finance": "https://finance.yahoo.com/news/rss",
-    "CNBC": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664",
-    # Buscamos noticias financieras globales recientes en Google News
-    "Google Finance (News)": "https://news.google.com/rss/search?q=when:24h+finance+markets&hl=en-US&gl=US&ceid=US:en",
-    "Investing.com": "https://www.investing.com/rss/news_25.rss"
+    "Yahoo Finance (Top)": "https://finance.yahoo.com/news/rss",
+    "CNBC (Top)": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664",
+    "Google News (Macro)": "https://news.google.com/rss/search?q=(FED+OR+inflation+OR+macro+OR+earnings)+AND+(US+OR+global)+when:24h&hl=en-US&gl=US&ceid=US:en",
+    "Investing (Commodities)": "https://www.investing.com/rss/commodities.rss",
+    "Investing (Central Banks)": "https://www.investing.com/rss/central_banks.rss"
 }
 
 def load_history():
@@ -74,29 +75,33 @@ def procesar_con_ia(noticias_candidatas):
         lista_para_ia.append({
             "id": noti["id"],
             "titulo": noti["titulo"],
-            "desc": noti["desc"][:400] # Acortamos la descripcion para tokens
+            "desc": noti["desc"][:1000] # Acortamos la descripcion para tokens
         })
     
     prompt = f"""
-Actúa como un analista financiero experto. Te daré una lista de noticias recientes en formato JSON.
-Tu tarea es filtrar y seleccionar un MÁXIMO de 5 o 6 noticias globales que sean las MÁS relevantes y de alto impacto, EXCLUSIVAMENTE sobre estos temas:
-1. Macroeconomía de Estados Unidos (Tasas, FED, inflación, etc)
-2. Acciones Globales (Global Stocks destacados)
-3. Conflictos Bélicos con impacto en el mercado global
-
-Si una noticia no encaja fuertemente en esos temas, ignórala. Queremos evitar el spam.
+Actúa como un Portfolio Manager Institucional. Evalúa estas noticias recientes.
+Para cada noticia, decide su relevancia del 1 al 10 basándote en su utilidad e impacto para un inversor.
+⚠️ INSTRUCCIONES DE PUNTUACIÓN:
+- 8 a 10: Noticias muy relevantes (balances de empresas grandes, datos macroeconómicos, movimientos fuertes de commodities o acciones líderes).
+- 7: Noticias importantes que resaltan tendencias del sector financiero y que un inversor agradecería leer.
+- 1 a 6: Ruido diario, resúmenes genéricos, eventos corporativos menores sin impacto global.
 
 Aquí están las noticias candidatas:
 {json.dumps(lista_para_ia, ensure_ascii=False)}
 
-Debes devolver ÚNICAMENTE un JSON válido que sea un arreglo bidimensional (lista de objetos) con las noticias que seleccionaste, en este formato exacto:
+Devuelve ÚNICAMENTE un JSON válido que sea un arreglo (lista de objetos) con AQUELLAS noticias que superen una calificación de relevancia de 7 o más (>= 7). Usa EXACTAMENTE este formato:
 [
   {{
     "id": 1,
+    "relevancia": 8,
+    "sentimiento": "🔴 Bearish",
+    "impacto_esperado": "Podría subir los rendimientos de los bonos...",
     "resumen": "Un resumen corto de máximo 2 oraciones, directo y profesional en ESPAÑOL",
-    "sector": "Escribe un nombre de sector o tema muy específico creado por ti (ej. Inteligencia Artificial, Tasas de la FED, Guerra en Medio Oriente, Chips, etc)"
+    "sector": "Ej. Commodities, Macro U.S., Central Banks, Geopolítica, etc."
   }}
 ]
+
+Si ninguna noticia de la lista tiene relevancia >= 7, devuelve un arreglo vacío [].
 ¡Es OBLIGATORIO que devuelvas SOLO EL JSON sin comillas invertidas (```), sin la palabra JSON y sin texto adicional!
 """
     try:
@@ -124,19 +129,33 @@ def enviar_telegram_bloque(noticias_formateadas):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
     # Armamos el mensaje con HTML
-    mensaje = f"<b>📊 RESUMEN HORARIO DE MERCADOS</b>\n<i>Selección de Macro U.S., Acciones y Geopolítica</i>\n\n"
+    mensaje = f"<b>📊 RESUMEN HORARIO DE MERCADOS</b>\n<i>Filtro de Alto Impacto (Relevancia >= 7)</i>\n\n"
     
     for nf in noticias_formateadas:
-        mensaje += f"📰 <b>{nf['titulo']}</b>\n"
-        mensaje += f"🏢 <b>Fuente:</b> {nf['fuente']}\n"
-        mensaje += f"📊 <b>Sector:</b> {nf['sector']}\n"
-        mensaje += f"📝 <b>Resumen:</b> {nf['resumen']}\n"
-        mensaje += f"🕒 <b>Publicado:</b> {nf['fecha']}\n"
-        mensaje += f"🔗 <a href='{nf['link']}'>Leer noticia completa</a>\n\n"
+        # Escapamos los contenidos dinamicos para evitar errores en el parse_mode="HTML"
+        titulo = html.escape(nf['titulo'])
+        fuente = html.escape(nf['fuente'])
+        sector = html.escape(nf['sector'])
+        resumen = html.escape(nf['resumen'])
+        fecha = html.escape(nf['fecha'])
+        link = nf['link']
+        sentimiento = html.escape(str(nf.get('sentimiento', 'Neutral')))
+        relevancia = html.escape(str(nf.get('relevancia', '7')))
+        impacto = html.escape(str(nf.get('impacto_esperado', 'Desconocido')))
 
-    # Si por alguna razon el mensaje supera el limite de Telegram
-    if len(mensaje) > 4000:
-        mensaje = mensaje[:3800] + "\n\n...(Mensaje cortado por límite de longitud)"
+        mensaje += f"📰 <b>{titulo}</b>\n"
+        mensaje += f"📈 <b>Relevancia:</b> {relevancia}/10 | <b>Sentimiento:</b> {sentimiento}\n"
+        mensaje += f"🏢 <b>Fuente:</b> {fuente} | <b>Sector:</b> {sector}\n"
+        mensaje += f"📝 <b>Resumen:</b> {resumen}\n"
+        mensaje += f"💥 <b>Impacto Esperado:</b> {impacto}\n"
+        mensaje += f"🕒 <b>Publicado:</b> {fecha}\n"
+        mensaje += f"🔗 <a href='{link}'>Leer noticia completa</a>\n\n"
+
+    # Si el mensaje supera el limite de Telegram (4096 caracteres), lo cortamos de forma segura.
+    # Un error "Unclosed start tag" suele ocurrir si truncamos en medio de un tag HTML.
+    if len(mensaje) > 4090:
+        # Cortamos y nos aseguramos de no dejar tags abiertos de forma simple (aunque el escape ya ayuda mucho)
+        mensaje = mensaje[:4000] + "\n\n...(Mensaje cortado por longitud)"
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -168,8 +187,8 @@ def buscar_y_procesar_noticias():
     for fuente_nombre, obj_url in FEEDS.items():
         try:
             feed = feedparser.parse(obj_url)
-            # Tomamos las más recientes de cada feed
-            for entry in feed.entries[:8]:
+            # Tomamos todos los elementos del feed, la fecha de c/u será el filtro
+            for entry in feed.entries:
                 link = entry.link
                 if link not in historial:
                     fecha_raw = entry.get('published', '') or entry.get('pubDate', '')
@@ -181,8 +200,9 @@ def buscar_y_procesar_noticias():
                             if dt.tzinfo is None:
                                 dt = dt.replace(tzinfo=timezone.utc)
                             now = datetime.now(timezone.utc)
-                            # Si la noticia tiene más de 24 horas, la ignoramos.
-                            if (now - dt) > timedelta(hours=24):
+                            # Filtro estricto: Si la noticia tiene más de 4 horas, la ignoramos.
+                            # Reduce dramáticamente el spam inicial.
+                            if (now - dt) > timedelta(hours=4):
                                 continue
                         except Exception:
                             pass # si no pudimos parsear la fecha, la dejamos pasar como actual.
@@ -225,10 +245,24 @@ def buscar_y_procesar_noticias():
                 "link": noti_original["link"],
                 "fecha": formatear_fecha(noti_original["fecha_raw"]),
                 "resumen": item_ia.get("resumen", "Sin resumen"),
-                "sector": item_ia.get("sector", "General")
+                "sector": item_ia.get("sector", "General"),
+                "sentimiento": item_ia.get("sentimiento", "Neutral"),
+                "relevancia": item_ia.get("relevancia", 7),
+                "impacto_esperado": item_ia.get("impacto_esperado", "Desconocido")
             })
-            # La marcamos como enviada y agregamos al historial real
-            nuevo_historial.append(noti_original["link"])
+            # ...
+            # No guardamos al historial aquí individualmente, lo haremos debajo para TODAS.
+
+    # Ordenar por relevancia descendente y quedarnos con el Top 5
+    if noticias_finales_a_enviar:
+        # Nos aseguramos de castear relevancia a int para ordenamiento seguro
+        noticias_finales_a_enviar.sort(key=lambda x: int(x.get("relevancia", 0)), reverse=True)
+        noticias_finales_a_enviar = noticias_finales_a_enviar[:5]
+
+    # TODAS las evaluadas (elegidas o descartadas) van al historial para no consumir más tokens
+    for n in noticias_candidatas:
+        if n["link"] not in nuevo_historial:
+            nuevo_historial.append(n["link"])
 
     # Enviamos un solo mensaje si hubo elegidas
     if noticias_finales_a_enviar:
@@ -236,9 +270,6 @@ def buscar_y_procesar_noticias():
         save_history(nuevo_historial)
     else:
         print("La IA descartó las candidatas porque no cumplían con los requisitos.")
-        # Opcional: podemos marcarlas como procesadas para que no vuelva a evaluarlas
-        for n in noticias_candidatas:
-            nuevo_historial.append(n["link"])
         save_history(nuevo_historial)
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Ciclo horario finalizado.")
